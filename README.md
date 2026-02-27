@@ -20,6 +20,15 @@ The pipeline consists of:
 
 Example to use scripts:
 
+
+python synthetic_generator/sim_video.py \
+    --output_dir synthetic_outputs \
+    --angular_speed 94.25 \
+    --cart_speed -1.11
+
+
+
+
 python training/train.py \
     --data_root dataset/synthetic \
     --labels_csv dataset/labels.csv \
@@ -27,11 +36,14 @@ python training/train.py \
     --output_dir outputs
 
 
+
+python training/test.py \
+    --test_data test_data.pt \
+     --weights wide_fov_best_model.pth 
+    --output_dir outputs
+
+
     
-python synthetic_generator/sim_video.py \
-    --output_dir synthetic_outputs \
-    --angular_speed 94.25 \
-    --cart_speed -1.11
 
 
 python preprocessing/preprocess.py \
@@ -52,6 +64,10 @@ python inference/predict_synthetic.py \
 python inference/predict_real.py \
     --frames_dir processed_frames \
     --weights wide_fov_best_model.pth    
+
+
+
+   
 
 
 
