@@ -1,9 +1,7 @@
 
----
 
 # ✅ models/wide_fov/README.md
 
-```markdown
 # Wide Field-of-View (FOV) Model
 
 This folder corresponds to the Transformer-based deep learning model 
