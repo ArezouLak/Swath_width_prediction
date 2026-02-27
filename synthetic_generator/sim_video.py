@@ -1,247 +1,217 @@
+#!/usr/bin/env python3
+"""
+Physics-based synthetic fertilizer distribution simulator.
+
+Generates:
+- Top-view synthetic video
+- Landing point scatter plot
+- Histogram distribution CSV
+"""
+
+import argparse
+import os
+import sys
+import time
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import gaussian_kde
-import pandas as pd
-# import matplotlib.animation as animation
-plt.close('all')  # Close all open figures at the start
+from tqdm import tqdm
+import imageio
 
-# ---------------------------
-# Simulation Parameters
-# ---------------------------
 
-g = 9.81
-frequency = 250
-disk_radius = 0.55 #0.25
-cart_speed_y =-1.11# -2 cart now moves in Y direction
-angular_speed =94.25#10.47#100 rpm 10.47 #20.94 200 rpm #  31.42 300 rpm #41.89 400 rpm #500rpm 52.36 #62.83 600 rpm   # 700 rpm 73.30 #800 rpm 83.78 #900 rpm 94.25 
-n_blades = 4
-disk_configs = [(-0.555, 0 ,1,1) , (0.555 ,0 ,1,-1)]#0.27 height
+# ======================================================
+# ARGUMENTS
+# ======================================================
+def parse_args():
+    parser = argparse.ArgumentParser(description="Synthetic fertilizer spread simulator")
 
-# Time settings
-dt = 1/frequency/2
-total_time = 5
-n_steps = int(total_time / dt)
-release_interval = int(1 /frequency/dt)
+    parser.add_argument("--output_dir", type=str, default="simulation_outputs")
+    parser.add_argument("--total_time", type=float, default=5.0)
+    parser.add_argument("--frequency", type=int, default=250)
+    parser.add_argument("--disk_radius", type=float, default=0.55)
+    parser.add_argument("--angular_speed", type=float, default=94.25)
+    parser.add_argument("--cart_speed", type=float, default=-1.11)
+    parser.add_argument("--n_blades", type=int, default=4)
+    parser.add_argument("--frame_size_m", type=float, default=60.0)
 
-# Drag and particles
-drag_coefficient = 0.07#1.95e-6#0.45  0.07
-particle_mass = 0.01
-positions = []
-particles = []
+    return parser.parse_args()
 
+
+# ======================================================
+# PARTICLE CLASS
+# ======================================================
 class Particle:
     def __init__(self, position, velocity):
         self.pos = np.array(position, dtype=float)
         self.vel = np.array(velocity, dtype=float)
         self.alive = True
 
-    def update(self):
+    def update(self, dt, g, drag_coefficient):
         if not self.alive:
             return
+
         v = self.vel
         drag_acc = -drag_coefficient * v * np.linalg.norm(v)
         acc = np.array([0, 0, -g]) + drag_acc
+
         self.vel += acc * dt
         self.pos += self.vel * dt
+
         if self.pos[2] <= 0:
             self.pos[2] = 0
             self.alive = False
-            positions.append((self.pos[0], self.pos[1]))
-
-# ---------------------------
-# Camera Setup
-# ---------------------------
-cam_z = 3
-fov = 180# 120degrees
-frame_width =60##60 # 23 meters across (approximate field of view at Z=3)
-frame_height =60#60.0#60#23
-frames = []
-
-fig, ax = plt.subplots(figsize=(10.24, 10.24), dpi=50)
-sc = ax.scatter([], [], s=10, color='white')
-ax.set_facecolor('black')
-
-ax.set_xlim(-frame_width/2, frame_width/2)
-ax.set_ylim(-frame_height/2, frame_height/2)
-#ax.set_title("Camera View from Above (Fixed on Cart)")
-ax.set_xticks([])
-ax.set_yticks([])
-
-# REMOVE padding around plot
-plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-
-from tqdm import tqdm
-
-# ---------------------------
-# Main Simulation Loop
-# ---------------------------
 
 
-for step in tqdm(range(n_steps), desc="Simulating"):
-    t = step * dt
-    cart_y = cart_speed_y * t  # cart moves in Y direction
-    if step % release_interval == 0:
-        for disk_x, disk_y, disk_z, direction in disk_configs:
-            for blade_index in range(n_blades):
-            # Blade angular position
-                angle = (angular_speed * t + blade_index * (2 * np.pi / n_blades)) % (2 * np.pi)
-                adjusted_angle = direction * angle
-                normalized_angle = (adjusted_angle + np.pi) % (2 * np.pi) - np.pi
+# ======================================================
+# MAIN SIMULATION
+# ======================================================
+def main():
 
-                # Limit ejection to 180°: only throw forward relative to disc rotation
-                if not (-np.pi / 2 <= normalized_angle <= np.pi / 2):
-                    continue
+    args = parse_args()
+    os.makedirs(args.output_dir, exist_ok=True)
 
-                # Direction from disc center to blade tip
-                #dir_vector = np.array([np.cos(normalized_angle), np.sin(normalized_angle)])
+    # Physics constants
+    g = 9.81
+    drag_coefficient = 0.07
+    particle_mass = 0.01
 
-                # Particle position at blade tip
-                #pos_offset = disk_radius * dir_vector
-                position = np.array([
-                    disk_x,# + pos_offset[0],
-                    cart_y,# + disk_y + pos_offset[1],
-                    disk_z
-                ])
+    dt = 1 / args.frequency / 2
+    n_steps = int(args.total_time / dt)
+    release_interval = int(1 / args.frequency / dt)
 
-                # Tangential velocity due to rotation
-                tangential = angular_speed * disk_radius * np.array([
-                    -np.sin(normalized_angle), np.cos(normalized_angle), 0
-                ])
+    particles = []
+    landing_positions = []
 
-                # Total velocity = tangential + cart motion
-                velocity = np.array([0, cart_speed_y, 0]) + tangential
+    disk_configs = [(-0.555, 0, 1, 1), (0.555, 0, 1, -1)]
 
-                # Add the new particle
-                particles.append(Particle(position, velocity))
+    # Setup figure
+    fig, ax = plt.subplots(figsize=(8, 8), dpi=100)
+    ax.set_facecolor("black")
+    ax.set_xlim(-args.frame_size_m / 2, args.frame_size_m / 2)
+    ax.set_ylim(-args.frame_size_m / 2, args.frame_size_m / 2)
+    ax.set_xticks([])
+    ax.set_yticks([])
 
-    for p in particles:
-        p.update()
+    frames = []
 
-    # Capture frame from camera
-    current_positions = np.array([p.pos for p in particles if p.alive])
-    if len(current_positions) > 0:
-        in_view = current_positions[(np.abs(current_positions[:,0]) <= frame_width/2) & 
-                                    (np.abs(current_positions[:,1] - cart_y) <= frame_height/2)]
-        
-        sc.set_offsets(np.c_[in_view[:,0], in_view[:,1] - cart_y])
-        plt.pause(0.001)  # Real-time display during simulation
-        fig.canvas.draw()
-        image = np.array(fig.canvas.renderer.buffer_rgba())[:, :, :3]
-        frames.append(image.copy())
-plt.close(fig)
+    # ===============================
+    # SIMULATION LOOP
+    # ===============================
+    for step in tqdm(range(n_steps), desc="Simulating"):
+        t = step * dt
+        cart_y = args.cart_speed * t
+
+        if step % release_interval == 0:
+            for disk_x, disk_y, disk_z, direction in disk_configs:
+                for blade_index in range(args.n_blades):
+
+                    angle = (args.angular_speed * t +
+                             blade_index * (2 * np.pi / args.n_blades))
+
+                    tangential = args.angular_speed * args.disk_radius * np.array([
+                        -np.sin(angle),
+                        np.cos(angle),
+                        0
+                    ])
+
+                    position = [disk_x, cart_y, disk_z]
+                    velocity = np.array([0, args.cart_speed, 0]) + tangential
+
+                    particles.append(Particle(position, velocity))
+
+        for p in particles:
+            prev_alive = p.alive
+            p.update(dt, g, drag_coefficient)
+
+            if prev_alive and not p.alive:
+                landing_positions.append((p.pos[0], p.pos[1]))
+
+        # Capture frame
+        alive_positions = np.array([p.pos for p in particles if p.alive])
+
+        if len(alive_positions) > 0:
+            ax.clear()
+            ax.set_facecolor("black")
+            ax.set_xlim(-args.frame_size_m / 2, args.frame_size_m / 2)
+            ax.set_ylim(-args.frame_size_m / 2, args.frame_size_m / 2)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            ax.scatter(alive_positions[:, 0],
+                       alive_positions[:, 1] - cart_y,
+                       s=5, color="white")
+
+            fig.canvas.draw()
+            frame = np.array(fig.canvas.renderer.buffer_rgba())[:, :, :3]
+            frames.append(frame)
+
+    plt.close(fig)
+
+    # ======================================================
+    # SAVE VIDEO
+    # ======================================================
+    video_path = os.path.join(args.output_dir, "synthetic_video.mp4")
+    writer = imageio.get_writer(video_path,
+                                fps=int(1 / (dt * 10)),
+                                format="ffmpeg")
+
+    for frame in frames:
+        writer.append_data(frame)
+    writer.close()
+
+    print(f"✅ Video saved: {video_path}")
+
+    # ======================================================
+    # SAVE LANDING DISTRIBUTION
+    # ======================================================
+    landing_positions = np.array(landing_positions)
+
+    plt.figure(figsize=(8, 5))
+    plt.scatter(landing_positions[:, 0],
+                landing_positions[:, 1],
+                alpha=0.7, s=10)
+    plt.xlabel("X (m)")
+    plt.ylabel("Y (m)")
+    plt.grid(True)
+
+    scatter_path = os.path.join(args.output_dir, "landing_scatter.png")
+    plt.savefig(scatter_path)
+    plt.close()
+
+    print(f"✅ Scatter saved: {scatter_path}")
+
+    # ======================================================
+    # HISTOGRAM
+    # ======================================================
+    counts, bins = np.histogram(landing_positions[:, 0], bins=50)
+
+    plt.figure(figsize=(8, 4))
+    plt.hist(landing_positions[:, 0], bins=50)
+    plt.xlabel("X position (m)")
+    plt.ylabel("Count")
+
+    hist_path = os.path.join(args.output_dir, "histogram.png")
+    plt.savefig(hist_path)
+    plt.close()
+
+    print(f"✅ Histogram saved: {hist_path}")
+
+    # Save CSV
+    import pandas as pd
+    df = pd.DataFrame({
+        "Bin_Start": bins[:-1],
+        "Bin_End": bins[1:],
+        "Count": counts
+    })
+
+    csv_path = os.path.join(args.output_dir, "histogram_bins.csv")
+    df.to_csv(csv_path, index=False)
+
+    print(f"✅ CSV saved: {csv_path}")
+    print("🎯 Simulation completed successfully")
 
 
-# ---------------------------
-# Plot Scatter of Landing Points
-# ---------------------------
-positions = np.array(positions)
-# ---------------------------
-# Distribution analysis in the sampling rectangle (fixed strip method)
-plt.figure(figsize=(10, 5))
-plt.scatter(positions[:, 0], positions[:, 1], alpha=0.7, s=10, color='green')
-
-# Draw horizontal sampling rectangle centered at Y=5, rotated to be perpendicular to Y axis
-rect_center_x = 0
-rect_center_y=0#-2.5#6
-rect_x_width = 15
-rect_y_width = 0.5
-rect_x_min = rect_center_x - rect_x_width / 2
-rect_x_max = rect_center_x + rect_x_width / 2
-rect_y_min = rect_center_y - rect_y_width / 2
-rect_y_max = rect_center_y + rect_y_width / 2
-
-plt.plot([rect_x_min, rect_x_max, rect_x_max, rect_x_min, rect_x_min],
-         [rect_y_min, rect_y_min, rect_y_max, rect_y_max, rect_y_min],
-         color='red', linestyle='--', linewidth=2)
-
-plt.title("Landing Points of Particles with Sampling Rectangle")
-plt.xlabel("X position (m)")
-plt.ylabel("Y position (m)")
-plt.grid(True)
-plt.axis("equal")
-
-plt.savefig("/home/arezou/UBONTO/result.png") 
-plt.show()
-# ---------------------------
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-from sklearn.mixture import GaussianMixture
-
-filtered_x = [x for x, y in positions if rect_x_min <= x <= rect_x_max and rect_y_min <= y <= rect_y_max]
-plt.figure(figsize=(8, 4))
-
-# Histogram and capture bin values
-counts, bin_edges, _ = plt.hist(
-    filtered_x, 
-    bins=50, #50, 
-    color='blue', 
-    edgecolor='black', 
-    alpha=0.6, 
-    range=(positions[:,0].min(), positions[:,0].max()),
-    label='Histogram'
-)
-
-# Compute bin centers for polynomial fitting
-bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-# Line connecting bar tops
-plt.plot(bin_centers, counts, marker='o', linestyle='-', color='darkorange', linewidth=2, label='Bar Top Curve')
-
-plt.title("Histogram of X Positions (Particles Landed in Rectangle at Y=5)")
-plt.xlabel("X position (m)")
-plt.ylabel("Count")
-plt.legend()
-plt.grid(True)
-
-# Save and show plot
-plot_path = "/home/arezou/UBONTO/hist_with_poly_fit.png"
-plt.savefig(plot_path)
-plt.show()
-
-# Print bin edges and counts
-for i in range(len(counts)):
-    print(f"Bin {i+1}: Range = ({bin_edges[i]:.2f}, {bin_edges[i+1]:.2f}), Count = {int(counts[i])}")
-
-# Prepare data for CSV
-bin_ranges = [f"({bin_edges[i]:.2f}, {bin_edges[i+1]:.2f})" for i in range(len(counts))]
-data = {
-    "Bin Index": list(range(1, len(counts)+1)),
-    "Range (m)": bin_ranges,
-    "Particle Count": counts.astype(int)
-}
-
-# Create DataFrame and save to CSV
-df_bins = pd.DataFrame(data)
-csv_path = "/home/arezou/UBONTO/histogram_bins.csv"
-df_bins.to_csv(csv_path, index=False)
-
-print(f"✅ Bin data saved to: {csv_path}")
-print(f"✅ Plot with polynomial fit saved to: {plot_path}")
-
-# ---------------------------
-# Save video as MP4 only (requires imageio-ffmpeg)
-# import imageio_ffmpeg
-import imageio
-
-output_path_mp4 = '/home/arezou/UBONTO/camera_view.mp4'
-writer = imageio.get_writer(output_path_mp4, fps=int(1/(dt*10)), format='ffmpeg')
-for frame in frames:
-    writer.append_data(frame)
-writer.close()
-print(f"✅ MP4 saved to: {output_path_mp4}")
-
-# Optionally show the first frame as confirmation
-plt.figure(figsize=(6, 6))
-plt.imshow(frames[0])
-plt.axis('off')
-plt.title("First Frame Preview")
-plt.show()
-
-# Graceful exit to prevent async task warnings
-import time, sys
-time.sleep(0.5)
-sys.exit(0)
-
+if __name__ == "__main__":
+    main()
 
 
 
