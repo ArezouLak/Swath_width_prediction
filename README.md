@@ -30,8 +30,8 @@ python synthetic_generator/sim_video.py \
 
 
 python training/train.py \
-    --data_root dataset/synthetic \
-    --labels_csv dataset/labels.csv \
+    --data_root dataset/synthetic/wide_FOV \
+    --labels_csv dataset/synthetic/wide_FOV/labels.csv \
     --num_frames 25 \
     --output_dir outputs
 
@@ -47,8 +47,8 @@ python training/test.py \
 
 
 python preprocessing/preprocess.py \
-    --in_dir raw_frames \
-    --out_dir processed_frames \
+    --in_dir dataset/real/Experiment1/raw_frames \
+    --out_dir  dataset/real/Experiment1/processed_frames \
     --resize_long 2208 \
     --square_pad 2208 \
     --clahe \
@@ -62,7 +62,7 @@ python inference/predict_synthetic.py \
 
 
 python inference/predict_real.py \
-    --frames_dir processed_frames \
+    --frames_dir dataset/real/Experiment1/processed_frames \
     --weights wide_fov_best_model.pth    
 
 
