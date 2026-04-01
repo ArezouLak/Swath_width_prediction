@@ -72,7 +72,7 @@ def main():
     # Physics constants
     g = 9.81
     drag_coefficient = 0.07
-    particle_mass = 0.026  
+    particle_mass = 0.026 gr  
 
     dt = 1 / args.frequency / 2
     n_steps = int(args.total_time / dt)
